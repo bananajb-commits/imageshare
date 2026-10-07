@@ -230,7 +230,7 @@
     #paintModal .paint-container {
       background: #fff;
       width: 95vw;
-      max-width: 700px;
+      max-width: 760px;
       height: 90vh;
       border-radius: 16px;
       display: flex;
@@ -244,8 +244,30 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       font-size: 13px;
+    }
+
+    .tool-btn {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: bold;
+      transition: all 0.2s;
+    }
+
+    .tool-btn.active {
+      background: #007aff;
+      color: white;
+      border-color: #007aff;
+    }
+
+    .tool-action-btn {
+      padding: 6px 10px;
+      font-size: 12px;
     }
 
     .paint-canvas-wrapper {
@@ -258,10 +280,26 @@
       overflow: hidden;
     }
 
-    canvas {
-      background: #fff;
+    /* キャンバス重ね合わせコンテナ */
+    #canvasContainer {
+      position: relative;
+      box-shadow: 0 0 12px rgba(0,0,0,0.4);
+    }
+
+    #bgCanvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      display: block;
+    }
+
+    #drawCanvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      display: block;
       cursor: crosshair;
-      touch-action: none;
+      touch-action: none; /* スマホスクロール防止 */
     }
 
     .paint-footer {
@@ -317,13 +355,26 @@
   <div class="modal-overlay" id="paintModal">
     <div class="paint-container">
       <div class="paint-toolbar">
-        <label>色: <input type="color" id="brushColor" value="#ff0000"></label>
-        <label>太さ: <input type="range" id="brushSize" min="2" max="40" value="8" style="width: 80px;"></label>
-        <button class="btn btn-gray" style="padding: 4px 8px;" id="btnClearCanvas">全消去</button>
+        <!-- ツール選択 -->
+        <button type="button" class="tool-btn active" id="btnToolPen">✏️ ペン</button>
+        <button type="button" class="tool-btn" id="btnToolEraser">🧹 消しゴム</button>
+        
+        <label id="colorWrapper">色: <input type="color" id="brushColor" value="#ff0000"></label>
+        <label>太さ: <input type="range" id="brushSize" min="2" max="50" value="8" style="width: 70px;"></label>
+        
+        <!-- ミス修正用ボタン -->
+        <button type="button" class="btn btn-gray tool-action-btn" id="btnUndo">↩ 1つ戻る</button>
+        <button type="button" class="btn btn-gray tool-action-btn" id="btnClearCanvas">🗑️ 全消し</button>
       </div>
+      
+      <!-- 写真(背景)とペイント(前面)の2層構造 -->
       <div class="paint-canvas-wrapper" id="canvasWrapper">
-        <canvas id="paintCanvas"></canvas>
+        <div id="canvasContainer">
+          <canvas id="bgCanvas"></canvas>
+          <canvas id="drawCanvas"></canvas>
+        </div>
       </div>
+
       <div class="paint-footer">
         <button class="btn btn-gray" style="flex:1" id="btnCancelPaint">閉じる</button>
         <button class="btn btn-green" style="flex:2" id="btnSendPainted">送信する</button>
@@ -333,7 +384,7 @@
 
   <script>
     /* ========================================================
-       1. Firebase 設定（武人さんの設定を反映済み）
+       1. Firebase 設定
        ======================================================== */
     const firebaseConfig = {
       apiKey: "AIzaSyALYUpk6KJuHtL47WdwZnhtRGqzyAIsofc",
@@ -345,7 +396,6 @@
       appId: "1:3447963990:web:901f020918879ea50fd6f7"
     };
 
-    // Firebase 初期化
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
     const messagesRef = database.ref("chat_messages");
@@ -375,7 +425,6 @@
       updateAllCardsAlignment();
     });
 
-    // 誰かが投稿したら即座に全員の画面に表示
     messagesRef.on("child_added", (snapshot) => {
       const id = snapshot.key;
       const msg = snapshot.val();
@@ -383,7 +432,6 @@
       timeline.scrollTop = timeline.scrollHeight;
     });
 
-    // 削除されたら全員の画面からも消す
     messagesRef.on("child_removed", (snapshot) => {
       const card = document.getElementById("msg-" + snapshot.key);
       if (card) card.remove();
@@ -465,7 +513,7 @@
     }
 
     /* ========================================================
-       4. 画像アップロード & ペイント
+       4. アップロード分岐
        ======================================================== */
     const choiceModal = document.getElementById("choiceModal");
     const choicePreview = document.getElementById("choicePreview");
@@ -473,17 +521,7 @@
     const btnSendDirect = document.getElementById("btnSendDirect");
     const btnCancelChoice = document.getElementById("btnCancelChoice");
 
-    const paintModal = document.getElementById("paintModal");
-    const canvas = document.getElementById("paintCanvas");
-    const ctx = canvas.getContext("2d");
-    const brushColor = document.getElementById("brushColor");
-    const brushSize = document.getElementById("brushSize");
-    const btnClearCanvas = document.getElementById("btnClearCanvas");
-    const btnCancelPaint = document.getElementById("btnCancelPaint");
-    const btnSendPainted = document.getElementById("btnSendPainted");
-
     let currentImageDataURL = "";
-    let baseImageObj = null;
 
     fileInput.addEventListener("change", (e) => {
       const file = e.target.files[0];
@@ -513,80 +551,188 @@
       openPainter(currentImageDataURL);
     });
 
+    /* ========================================================
+       5. 高機能ペイントツール (消しゴム / 戻る / 全消し)
+       ======================================================== */
+    const paintModal = document.getElementById("paintModal");
+    const canvasContainer = document.getElementById("canvasContainer");
+    const bgCanvas = document.getElementById("bgCanvas");
+    const drawCanvas = document.getElementById("drawCanvas");
+    const bgCtx = bgCanvas.getContext("2d");
+    const drawCtx = drawCanvas.getContext("2d");
+
+    const btnToolPen = document.getElementById("btnToolPen");
+    const btnToolEraser = document.getElementById("btnToolEraser");
+    const brushColor = document.getElementById("brushColor");
+    const brushSize = document.getElementById("brushSize");
+    const btnUndo = document.getElementById("btnUndo");
+    const btnClearCanvas = document.getElementById("btnClearCanvas");
+    const btnCancelPaint = document.getElementById("btnCancelPaint");
+    const btnSendPainted = document.getElementById("btnSendPainted");
+
+    let currentTool = "pen"; // 'pen' または 'eraser'
+    let undoStack = [];      // 1つ戻る用の履歴
+    const MAX_UNDO = 15;
     let isDrawing = false;
     let lastX = 0, lastY = 0;
 
+    // ペン・消しゴムの切り替え
+    btnToolPen.addEventListener("click", () => setTool("pen"));
+    btnToolEraser.addEventListener("click", () => setTool("eraser"));
+
+    function setTool(tool) {
+      currentTool = tool;
+      if (tool === "pen") {
+        btnToolPen.classList.add("active");
+        btnToolEraser.classList.remove("active");
+      } else {
+        btnToolEraser.classList.add("active");
+        btnToolPen.classList.remove("active");
+      }
+    }
+
+    // 履歴保存（アンドゥ用）
+    function pushUndoState() {
+      if (undoStack.length >= MAX_UNDO) {
+        undoStack.shift();
+      }
+      undoStack.push(drawCtx.getImageData(0, 0, drawCanvas.width, drawCanvas.height));
+    }
+
+    // ↩ 1つ戻る
+    btnUndo.addEventListener("click", () => {
+      if (undoStack.length > 0) {
+        const prevState = undoStack.pop();
+        drawCtx.putImageData(prevState, 0, 0);
+      }
+    });
+
+    // 🗑️ 全消し（描いた線だけリセット）
+    btnClearCanvas.addEventListener("click", () => {
+      if (confirm("描いたペイントをすべて消しますか？\n（元の写真に戻ります）")) {
+        pushUndoState(); // 全消しもアンドゥ可能
+        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      }
+    });
+
+    // ペイント起動
     function openPainter(dataURL) {
       paintModal.style.display = "flex";
-      baseImageObj = new Image();
-      baseImageObj.onload = () => {
+      setTool("pen");
+      undoStack = [];
+
+      const img = new Image();
+      img.onload = () => {
         const wrapper = document.getElementById("canvasWrapper");
         const maxW = wrapper.clientWidth - 20;
         const maxH = wrapper.clientHeight - 20;
 
-        let width = baseImageObj.width;
-        let height = baseImageObj.height;
-        const ratio = Math.min(maxW / width, maxH / height, 1);
-        canvas.width = width * ratio;
-        canvas.height = height * ratio;
+        let w = img.width;
+        let h = img.height;
+        const ratio = Math.min(maxW / w, maxH / h, 1);
+        const finalW = Math.round(w * ratio);
+        const finalH = Math.round(h * ratio);
 
-        resetCanvasToImage();
+        // 2つのキャンバスと枠のサイズを揃える
+        canvasContainer.style.width = finalW + "px";
+        canvasContainer.style.height = finalH + "px";
+
+        bgCanvas.width = finalW;
+        bgCanvas.height = finalH;
+        drawCanvas.width = finalW;
+        drawCanvas.height = finalH;
+
+        // 背景に元の写真を描画
+        bgCtx.clearRect(0, 0, finalW, finalH);
+        bgCtx.drawImage(img, 0, 0, finalW, finalH);
+
+        // 前面のお絵描きキャンバスを透明クリア
+        drawCtx.clearRect(0, 0, finalW, finalH);
       };
-      baseImageObj.src = dataURL;
+      img.src = dataURL;
     }
 
-    function resetCanvasToImage() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(baseImageObj, 0, 0, canvas.width, canvas.height);
-    }
-
-    btnClearCanvas.addEventListener("click", resetCanvasToImage);
     btnCancelPaint.addEventListener("click", () => paintModal.style.display = "none");
 
+    // 送信（背景写真 ＋ ペイントを1枚に合成して送信）
     btnSendPainted.addEventListener("click", async () => {
-      const finalImage = canvas.toDataURL("image/jpeg", 0.85);
+      const mergeCanvas = document.createElement("canvas");
+      mergeCanvas.width = bgCanvas.width;
+      mergeCanvas.height = bgCanvas.height;
+      const mCtx = mergeCanvas.getContext("2d");
+
+      // 写真と線を合成
+      mCtx.drawImage(bgCanvas, 0, 0);
+      mCtx.drawImage(drawCanvas, 0, 0);
+
+      const finalImage = mergeCanvas.toDataURL("image/jpeg", 0.85);
       paintModal.style.display = "none";
       await sendToCloud(finalImage);
     });
 
+    // 座標取得
     function getPos(e) {
-      const rect = canvas.getBoundingClientRect();
+      const rect = drawCanvas.getBoundingClientRect();
+      const scaleX = drawCanvas.width / rect.width;
+      const scaleY = drawCanvas.height / rect.height;
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-      return { x: clientX - rect.left, y: clientY - rect.top };
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+      };
     }
 
     function startDraw(e) {
       isDrawing = true;
+      pushUndoState(); // 描き始める直前の状態を保存
       const pos = getPos(e);
-      lastX = pos.x; lastY = pos.y;
+      lastX = pos.x;
+      lastY = pos.y;
     }
 
     function draw(e) {
       if (!isDrawing) return;
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       const pos = getPos(e);
-      ctx.beginPath();
-      ctx.moveTo(lastX, lastY);
-      ctx.lineTo(pos.x, pos.y);
-      ctx.strokeStyle = brushColor.value;
-      ctx.lineWidth = brushSize.value;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.stroke();
-      lastX = pos.x; lastY = pos.y;
+
+      drawCtx.beginPath();
+      drawCtx.moveTo(lastX, lastY);
+      drawCtx.lineTo(pos.x, pos.y);
+      drawCtx.lineWidth = brushSize.value;
+      drawCtx.lineCap = "round";
+      drawCtx.lineJoin = "round";
+
+      if (currentTool === "eraser") {
+        // 消しゴムモード：描いた線だけを透明に消去
+        drawCtx.globalCompositeOperation = "destination-out";
+        drawCtx.stroke();
+      } else {
+        // ペンモード：通常描画
+        drawCtx.globalCompositeOperation = "source-over";
+        drawCtx.strokeStyle = brushColor.value;
+        drawCtx.stroke();
+      }
+
+      lastX = pos.x;
+      lastY = pos.y;
     }
 
-    function stopDraw() { isDrawing = false; }
+    function stopDraw() {
+      isDrawing = false;
+    }
 
-    canvas.addEventListener("mousedown", startDraw);
-    canvas.addEventListener("mousemove", draw);
+    // マウス操作
+    drawCanvas.addEventListener("mousedown", startDraw);
+    drawCanvas.addEventListener("mousemove", draw);
     window.addEventListener("mouseup", stopDraw);
 
-    canvas.addEventListener("touchstart", startDraw, { passive: false });
-    canvas.addEventListener("touchmove", draw, { passive: false });
+    // スマホタッチ操作
+    drawCanvas.addEventListener("touchstart", startDraw, { passive: false });
+    drawCanvas.addEventListener("touchmove", draw, { passive: false });
     window.addEventListener("touchend", stopDraw);
 
+    // 画像軽量化
     function resizeImage(dataUrl, maxSide, callback) {
       const img = new Image();
       img.onload = () => {
