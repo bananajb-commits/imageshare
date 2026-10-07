@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>みんなのペイント画像チャット</title>
 
-  <!-- Firebase SDK（クラウド同期用ライブラリ） -->
+  <!-- Firebase クラウド通信SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -14,7 +14,7 @@
       --bg-chat: #7b92a5;       /* LINE風の背景 */
       --header-bg: #273238;
       --bubble-bg: #ffffff;
-      --bubble-mine: #85e28a;   /* 自分のメッセージ色 */
+      --bubble-mine: #85e28a;   /* 自分のメッセージ */
       --primary-color: #06c755;
     }
 
@@ -284,7 +284,7 @@
     <h2>みんなの画像チャット</h2>
     <div class="user-info">
       <label for="username">名前:</label>
-      <input type="text" id="username" placeholder="ゲスト" maxlength="15">
+      <input type="text" id="username" placeholder="武人" maxlength="15">
     </div>
   </header>
 
@@ -333,17 +333,16 @@
 
   <script>
     /* ========================================================
-       1. Firebase 設定 (全員のデータをクラウドで共有)
-       ※ Firebaseコンソールで取得した設定をここに貼り付けてください
+       1. Firebase 設定（武人さんの設定を反映済み）
        ======================================================== */
     const firebaseConfig = {
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_AUTH_DOMAIN",
-      databaseURL: "YOUR_DATABASE_URL",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_STORAGE_BUCKET",
-      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-      appId: "YOUR_APP_ID"
+      apiKey: "AIzaSyALYUpk6KJuHtL47WdwZnhtRGqzyAIsofc",
+      authDomain: "imageshare-4183f.firebaseapp.com",
+      databaseURL: "https://imageshare-4183f-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "imageshare-4183f",
+      storageBucket: "imageshare-4183f.firebasestorage.app",
+      messagingSenderId: "3447963990",
+      appId: "1:3447963990:web:901f020918879ea50fd6f7"
     };
 
     // Firebase 初期化
@@ -364,19 +363,19 @@
     }
 
     /* ========================================================
-       3. タイムライン ＆ リアルタイム送受信
+       3. タイムライン ＆ リアルタイム同期
        ======================================================== */
     const usernameInput = document.getElementById("username");
     const timeline = document.getElementById("timeline");
     const fileInput = document.getElementById("fileInput");
 
-    usernameInput.value = localStorage.getItem("chat_username") || "ゲスト";
+    usernameInput.value = localStorage.getItem("chat_username") || "武人";
     usernameInput.addEventListener("input", (e) => {
       localStorage.setItem("chat_username", e.target.value.trim());
       updateAllCardsAlignment();
     });
 
-    // 誰かが画像を送信したら、全員の画面に即座に追加される（リアルタイム同期）
+    // 誰かが投稿したら即座に全員の画面に表示
     messagesRef.on("child_added", (snapshot) => {
       const id = snapshot.key;
       const msg = snapshot.val();
@@ -384,7 +383,7 @@
       timeline.scrollTop = timeline.scrollHeight;
     });
 
-    // 送信者が画像を削除したら、全員の画面からも消える
+    // 削除されたら全員の画面からも消す
     messagesRef.on("child_removed", (snapshot) => {
       const card = document.getElementById("msg-" + snapshot.key);
       if (card) card.remove();
@@ -421,7 +420,6 @@
       timeline.appendChild(card);
     }
 
-    // 名前を変えた時に「自分/他人」の吹き出し左右位置を再計算
     function updateAllCardsAlignment() {
       const currentUserName = usernameInput.value.trim() || "ゲスト";
       const currentToken = getSenderToken();
@@ -434,7 +432,6 @@
       });
     }
 
-    // クラウド送信
     async function sendToCloud(imageBase64) {
       const currentUserName = usernameInput.value.trim() || "ゲスト";
       await messagesRef.push({
@@ -446,7 +443,6 @@
       });
     }
 
-    // 本人のみ削除実行（クラウド上から消すので他人の画面からも消去）
     window.removePost = async function(id) {
       const snapshot = await messagesRef.child(id).once("value");
       const msg = snapshot.val();
@@ -459,7 +455,7 @@
         return;
       }
 
-      if (confirm("この画像を削除しますか？\n（他の人の画面からも消えます）")) {
+      if (confirm("この画像を削除しますか？\n（全員の画面からも消えます）")) {
         await messagesRef.child(id).remove();
       }
     };
@@ -495,7 +491,6 @@
 
       const reader = new FileReader();
       reader.onload = (event) => {
-        // クラウド通信量を節約するため長辺800pxに自動最適化
         resizeImage(event.target.result, 800, (resizedDataUrl) => {
           currentImageDataURL = resizedDataUrl;
           choicePreview.src = currentImageDataURL;
@@ -518,7 +513,6 @@
       openPainter(currentImageDataURL);
     });
 
-    /* ペイント処理 */
     let isDrawing = false;
     let lastX = 0, lastY = 0;
 
