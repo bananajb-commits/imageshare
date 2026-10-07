@@ -9,6 +9,7 @@
       --bg-chat: #7b92a5;       /* LINE風の背景色 */
       --header-bg: #273238;
       --bubble-bg: #ffffff;
+      --bubble-mine: #85e28a;   /* 自分のメッセージ背景（LINE風の薄緑） */
       --primary-color: #06c755; /* LINEグリーン */
     }
 
@@ -55,7 +56,7 @@
       border: 1px solid #ccc;
       outline: none;
       font-size: 14px;
-      width: 140px;
+      width: 130px;
     }
 
     /* LINE風 タイムラインエリア */
@@ -90,6 +91,7 @@
 
     .message-card.mine .user-name {
       text-align: right;
+      color: #e0f2fe;
     }
 
     .bubble {
@@ -98,6 +100,10 @@
       border-radius: 12px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.15);
       position: relative;
+    }
+
+    .message-card.mine .bubble {
+      background: var(--bubble-mine);
     }
 
     .bubble img {
@@ -112,18 +118,39 @@
       display: flex;
       justify-content: flex-end;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       margin-top: 4px;
       font-size: 11px;
-      color: #888;
+      color: #555;
     }
 
+    /* ダウンロード（保存）リンク */
+    .download-btn {
+      color: #007aff;
+      font-size: 11px;
+      font-weight: bold;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .download-btn:hover {
+      color: #0051a8;
+    }
+
+    /* 削除ボタン */
     .delete-btn {
       background: none;
       border: none;
-      color: #ff5252;
+      color: #e53935;
       font-size: 11px;
+      font-weight: bold;
       cursor: pointer;
+      text-decoration: underline;
+      padding: 2px 4px;
+    }
+
+    .delete-btn:hover {
+      color: #b71c1c;
     }
 
     /* フッター送信バー */
@@ -245,7 +272,7 @@
       background: #fff;
       box-shadow: 0 0 10px rgba(0,0,0,0.3);
       cursor: crosshair;
-      touch-action: none; /* スマホでのスクロール防止 */
+      touch-action: none;
     }
 
     .paint-footer {
@@ -268,14 +295,14 @@
     <h2>画像チャット</h2>
     <div class="user-info">
       <label for="username">名前:</label>
-      <input type="text" id="username" placeholder="匿名ユーザー" maxlength="15">
+      <input type="text" id="username" placeholder="ゲスト" maxlength="15">
     </div>
   </header>
 
-  <!-- LINE風タイムライン表示エリア -->
+  <!-- タイムラインエリア -->
   <div id="timeline"></div>
 
-  <!-- 画像選択エリア -->
+  <!-- フッター送信ボタン -->
   <footer>
     <label class="upload-btn">
       📷 画像をアップロードする
@@ -283,7 +310,7 @@
     </label>
   </footer>
 
-  <!-- 選択確認モーダル (そのまま / ペイント) -->
+  <!-- 選択モーダル (そのまま / ペイント) -->
   <div class="modal-overlay" id="choiceModal">
     <div class="modal-box">
       <h3>画像をどうしますか？</h3>
@@ -297,7 +324,7 @@
     </div>
   </div>
 
-  <!-- ペイント用フルモーダル -->
+  <!-- ペイントモーダル -->
   <div class="modal-overlay" id="paintModal">
     <div class="paint-container">
       <div class="paint-toolbar">
@@ -317,8 +344,17 @@
 
   <script>
     /* ========================================================
-       1. IndexedDB 設定 (大容量画像も消えずに保存可能)
+       1. 送信者識別トークン & IndexedDB
        ======================================================== */
+    function getSenderToken() {
+      let token = localStorage.getItem("chat_sender_token");
+      if (!token) {
+        token = "user_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now();
+        localStorage.setItem("chat_sender_token", token);
+      }
+      return token;
+    }
+
     const DB_NAME = "PaintChatDB";
     const STORE_NAME = "messages";
 
@@ -341,7 +377,8 @@
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
       const item = {
-        username: username || "名無し",
+        username: username || "ゲスト",
+        senderToken: getSenderToken(),
         image: imageBase64,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: Date.now()
@@ -366,7 +403,7 @@
     }
 
     /* ========================================================
-       2. UI・初期化処理
+       2. UI・初期化・タイムライン描画
        ======================================================== */
     const usernameInput = document.getElementById("username");
     const timeline = document.getElementById("timeline");
@@ -392,24 +429,34 @@
     let currentImageDataURL = "";
     let baseImageObj = null;
 
-    // ユーザー名を localStorage に記憶
     usernameInput.value = localStorage.getItem("chat_username") || "ゲスト";
     usernameInput.addEventListener("input", (e) => {
       localStorage.setItem("chat_username", e.target.value.trim());
+      renderTimeline(false);
     });
 
-    // 起動時に保存済みメッセージを読み込み
-    window.addEventListener("DOMContentLoaded", renderTimeline);
+    window.addEventListener("DOMContentLoaded", () => renderTimeline(true));
 
-    async function renderTimeline() {
+    async function renderTimeline(shouldScrollBottom = true) {
       const messages = await getAllMessages();
       timeline.innerHTML = "";
       const currentUserName = usernameInput.value.trim() || "ゲスト";
+      const currentToken = getSenderToken();
 
       messages.forEach(msg => {
-        const isMine = (msg.username === currentUserName);
+        const isMine = (msg.senderToken ? msg.senderToken === currentToken : true)
+                       && (msg.username === currentUserName);
+
         const card = document.createElement("div");
         card.className = `message-card ${isMine ? 'mine' : ''}`;
+
+        // 本人のみ削除ボタンを表示
+        const deleteButtonHtml = isMine
+          ? `<button class="delete-btn" onclick="removePost(${msg.id})">削除</button>`
+          : ``;
+
+        // 画像ダウンロード用ファイル名 (例: chat_1678900000.jpg)
+        const downloadFileName = `image_${msg.username}_${msg.id}.jpg`;
 
         card.innerHTML = `
           <div class="user-name">${escapeHtml(msg.username)}</div>
@@ -417,22 +464,46 @@
             <img src="${msg.image}" alt="投稿画像" onclick="window.open('${msg.image}')">
             <div class="msg-meta">
               <span>${msg.time}</span>
-              <button class="delete-btn" onclick="removePost(${msg.id})">削除</button>
+              <!-- ダウンロードボタン（保存） -->
+              <a class="download-btn" href="${msg.image}" download="${downloadFileName}">保存</a>
+              ${deleteButtonHtml}
             </div>
           </div>
         `;
         timeline.appendChild(card);
       });
 
-      // 最新メッセージへ自動スクロール
-      timeline.scrollTop = timeline.scrollHeight;
+      if (shouldScrollBottom) {
+        timeline.scrollTop = timeline.scrollHeight;
+      }
     }
 
+    // 削除処理
     window.removePost = async function(id) {
-      if (confirm("この画像を削除しますか？")) {
-        await deleteMessage(id);
-        renderTimeline();
-      }
+      const db = await openDatabase();
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(id);
+
+      req.onsuccess = async () => {
+        const msg = req.result;
+        if (!msg) return;
+
+        const currentUserName = usernameInput.value.trim() || "ゲスト";
+        const currentToken = getSenderToken();
+        const isMine = (msg.senderToken ? msg.senderToken === currentToken : true)
+                       && (msg.username === currentUserName);
+
+        if (!isMine) {
+          alert("自分が送信した画像のみ削除できます。");
+          return;
+        }
+
+        if (confirm("この画像を削除しますか？")) {
+          await deleteMessage(id);
+          renderTimeline(false);
+        }
+      };
     };
 
     function escapeHtml(str) {
@@ -440,7 +511,7 @@
     }
 
     /* ========================================================
-       3. 画像アップロードと選択肢
+       3. 画像アップロード & 選択分岐
        ======================================================== */
     fileInput.addEventListener("change", (e) => {
       const file = e.target.files[0];
@@ -448,7 +519,6 @@
 
       const reader = new FileReader();
       reader.onload = (event) => {
-        // 画像のリサイズ処理（描画が重くならないよう長辺最大1000pxに縮小）
         resizeImage(event.target.result, 1000, (resizedDataUrl) => {
           currentImageDataURL = resizedDataUrl;
           choicePreview.src = currentImageDataURL;
@@ -456,28 +526,26 @@
         });
       };
       reader.readAsDataURL(file);
-      fileInput.value = ""; // 同じファイルを再度選べるようにリセット
+      fileInput.value = "";
     });
 
     btnCancelChoice.addEventListener("click", () => {
       choiceModal.style.display = "none";
     });
 
-    // そのまま送信
     btnSendDirect.addEventListener("click", async () => {
       choiceModal.style.display = "none";
       await saveMessage(usernameInput.value.trim(), currentImageDataURL);
-      renderTimeline();
+      renderTimeline(true);
     });
 
-    // ペイント画面へ移行
     btnGoPaint.addEventListener("click", () => {
       choiceModal.style.display = "none";
       openPainter(currentImageDataURL);
     });
 
     /* ========================================================
-       4. ペイントツール機能 (Canvas)
+       4. ペイントツール (Canvas)
        ======================================================== */
     let isDrawing = false;
     let lastX = 0, lastY = 0;
@@ -486,7 +554,6 @@
       paintModal.style.display = "flex";
       baseImageObj = new Image();
       baseImageObj.onload = () => {
-        // コンテナ内に収まるようにキャンバスサイズを設定
         const wrapper = document.getElementById("canvasWrapper");
         const maxW = wrapper.clientWidth - 20;
         const maxH = wrapper.clientHeight - 20;
@@ -518,10 +585,9 @@
       const finalImage = canvas.toDataURL("image/jpeg", 0.9);
       paintModal.style.display = "none";
       await saveMessage(usernameInput.value.trim(), finalImage);
-      renderTimeline();
+      renderTimeline(true);
     });
 
-    // マウス / タッチの描画座標計算
     function getPos(e) {
       const rect = canvas.getBoundingClientRect();
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -561,18 +627,16 @@
       isDrawing = false;
     }
 
-    // マウスイベント
     canvas.addEventListener("mousedown", startDraw);
     canvas.addEventListener("mousemove", draw);
     window.addEventListener("mouseup", stopDraw);
 
-    // スマホタッチイベント
     canvas.addEventListener("touchstart", startDraw, { passive: false });
     canvas.addEventListener("touchmove", draw, { passive: false });
     window.addEventListener("touchend", stopDraw);
 
     /* ========================================================
-       5. ユーティリティ: 画像軽量化
+       5. ユーティリティ: 画像リサイズ
        ======================================================== */
     function resizeImage(dataUrl, maxSide, callback) {
       const img = new Image();
